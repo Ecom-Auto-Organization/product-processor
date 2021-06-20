@@ -1,0 +1,38 @@
+#Test environment stack for product processor
+#StackName: product-processor-dev
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  product-processor
+
+  Sample SAM Template for product-processor
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 3008
+
+Resources:
+  ProductProcessor:
+    Type: AWS::Serverless::Function 
+    Properties:
+      FunctionName: product-processor
+      CodeUri: src/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Role: arn:aws:iam::191337286028:role/lambda-with-shopify
+      Layers:
+        - arn:aws:lambda:us-east-2:191337286028:layer:custom_dependencies:6
+      Environment:
+        Variables:
+          bulk_manager_table: BulkManager
+          s3_file_upload_bucket: shopify-file-save
+          prepared_products_bucket: shopify-prepared-products-dev
+          import_topic_arn: arn:aws:sns:us-east-2:191337286028:ProductImportTopic
+          shopify_api_version: 2021-04
+          batch_size: 100
+
+
+Outputs:
+  ProductProcessor:
+    Description: "product processor Function ARN"
+    Value: !GetAtt ProductProcessor.Arn

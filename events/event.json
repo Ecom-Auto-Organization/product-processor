@@ -1,0 +1,27 @@
+{
+  "Records": [
+      {
+          "EventSource": "aws:sns",
+          "EventVersion": "1.0",
+          "EventSubscriptionArn": "arn:aws:sns:us-east-2:191337286028:ProductImportTopic:a53d78a5-61e3-4513-814b-ada909004e55",
+          "Sns": {
+              "Type": "Notification",
+              "MessageId": "87b8f5e9-d477-5604-bd48-acce1aad4294",
+              "TopicArn": "arn:aws:sns:us-east-2:191337286028:ProductImportTopic",
+              "Subject": null,
+              "Message": "{\"jobId\": \"82884721-6a31-48fc-926c-033f0cda5572\"}",
+              "Timestamp": "2021-05-26T04:20:42.152Z",
+              "SignatureVersion": "1",
+              "Signature": "Cu7+nv+7c9svIColjz88Pusim5lFTLoQ2ZEETOISEYNvAAksgjARDY1i1lEa98A/Fglon81XiisITJZlQ6FF+efe+va22k/7hkjYCbNv1wIEtQZ65EitQh7RzuVy9keDgqZcBjBe8HnzZqaCIZ7MYmnZgHapEirDgFaRDGp+aodHrA/EJH/OBnbHT+FxQjDUmW595gELZ0whs/tgGRoR1wW7exCXAQV7wxRW+cEN1dKrwRJhl5LKQMfUZE5WXFP87MtlZE/yeLyx2N6rFQD02IEoaRh/B7MwEAftuq6H9cUNqPdhDfEal5v4UaqsFTZuopc+Ov1PKVThXUCXqSDR6Q==",
+              "SigningCertUrl": "https://sns.us-east-2.amazonaws.com/SimpleNotificationService-010a507c1833636cd94bdb98bd93083a.pem",
+              "UnsubscribeUrl": "https://sns.us-east-2.amazonaws.com/?Action=Unsubscribe&SubscriptionArn=arn:aws:sns:us-east-2:191337286028:ProductImportTopic:a53d78a5-61e3-4513-814b-ada909004e55",
+              "MessageAttributes": {
+                  "process": {
+                      "Type": "String",
+                      "Value": "process-product"
+                  }
+              }
+          }
+      }
+  ]
+}
