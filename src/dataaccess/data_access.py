@@ -2,6 +2,7 @@ import logging
 import boto3
 import json
 import requests
+import asyncio
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 from datamodel.custom_exceptions import DataAccessError
@@ -21,6 +22,7 @@ class DataAccess:
     def __init__(self):
         self._prepared_products_bucket = os.environ.get('prepared_products_bucket')
         self._s3_client = boto3.client('s3')
+        self._dynamo_client = boto3.client('dynamodb')
         bulk_manager_table = os.environ.get('bulk_manager_table')
         self._dynamodb = boto3.resource('dynamodb')
         self._bulk_manager_table =  self._dynamodb.Table(bulk_manager_table) 
@@ -28,20 +30,19 @@ class DataAccess:
         self._api_version = os.environ.get('shopify_api_version')
 
 
-    def get_job(self, job_id):
-        job = utils.join_str('job#', job_id)
-        prefix = 'user'
+    def get_job(self, job_id, user_id):
+        job_to_get = {'id': job_id, 'user_id': user_id}
+        db_job = data_model_utils.convert_to_db_job(job_to_get)
 
         try:
-            response = self._bulk_manager_table.query(
-                KeyConditionExpression=Key('PK').eq(job) & Key('SK').begins_with(prefix)
-            )
-
-            job = None
-            if len(response['Items']) > 0:
-                db_job = response['Items'][0]
-                job = data_model_utils.extract_job_details(db_job)
-            return job
+            response = self._bulk_manager_table.get_item(Key=db_job)
+            job_obj = None
+            if 'Item' in response:
+                db_job = response['Item']
+                job_obj = data_model_utils.extract_job_details(db_job)
+                return job_obj 
+            else:
+                raise DataAccessError('Response to get job is invalid. Details: ' + response)
         except ClientError as error:
             raise DataAccessError(error)
 
@@ -83,13 +84,15 @@ class DataAccess:
         del db_job['SK']
 
         expression_attr_values = utils.get_expression_attr_values(db_job)
-        update_expression = utils.get_update_expression(expression_attr_values)
+        expression_attr_names = utils.get_expression_attr_names(expression_attr_values)
+        update_expression = utils.get_update_expression(expression_attr_values, expression_attr_names)
 
         try:
             response = self._bulk_manager_table.update_item(
                 Key=primary_key,
                 UpdateExpression=update_expression,
                 ExpressionAttributeValues=expression_attr_values,
+                ExpressionAttributeNames=expression_attr_names,
                 ReturnValues='UPDATED_NEW'
             )
 
@@ -117,6 +120,101 @@ class DataAccess:
             raise DataAccessError(error) 
 
 
+    def add_result_transaction(self, result, job):
+        update_expression = ''
+        if result['status'] == 'SUCCESS':
+            update_expression = 'SET total_success = if_not_exists(total_success, :start) + :incr'
+        else:
+            update_expression = 'SET total_failed = if_not_exists(total_failed, :start) + :incr'
+        try:
+            result_item = {
+                'PK': { 'S': utils.join_str('result#', result['id']) },
+                'SK': { 'S': utils.join_str('job#', result['job_id']) },
+                'data': { 'S': result['data'] },
+                'status': { 'S': result['status'] }
+            }
+            if 'errors' in result:
+                result_item['errors'] = { 'S': result['errors'] }
+            if 'warnings' in result:
+                result_item['warnings'] = { 'S': result['warnings'] }
+            
+            response = self._dynamo_client.transact_write_items(
+                TransactItems=[
+                    {
+                        'Put': {
+                            'TableName': os.environ.get('bulk_manager_table'),
+                            'Item': result_item
+                        }
+                    },
+                    {
+                        'Update': {
+                            'TableName': os.environ.get('bulk_manager_table'),
+                            'Key': {
+                                'PK': { 'S': utils.join_str('job#', job['id']) },
+                                'SK': { 'S': utils.join_str('user#', job['user_id']) },
+                            },
+                            'UpdateExpression': update_expression,
+                            'ExpressionAttributeValues': {
+                                ':incr': { 'N': '1' },
+                                ':start': { 'N': '0' }
+                            }
+                        }
+                    }
+                ]
+            )
+            logging.info('add result transaction completed successfully. Details: %s', result)
+            return True
+        except ClientError as error:
+            raise DataAccessError(error)
+        except Exception as error:
+            raise DataAccessError(error)
+
+
+    def finish_job_transaction(self, job):
+        try:
+            response = self._dynamo_client.transact_write_items(
+                TransactItems=[
+                    {
+                        'Update': {
+                            'TableName': os.environ.get('bulk_manager_table'),
+                            'Key': {
+                                'PK': { 'S': utils.join_str('job#', job['id']) },
+                                'SK': { 'S': utils.join_str('user#', job['user_id']) },
+                            },
+                            'UpdateExpression': 'SET #duration_db_key = :duration, #status_db_key = :status',
+                            'ExpressionAttributeValues': {
+                                ':status': { 'S': job['status'] }, 
+                                ':duration': { 'S': job['duration'] }, 
+                            },
+                            'ExpressionAttributeNames': {
+                                '#status_db_key': 'status', 
+                                '#duration_db_key': 'duration',
+                            }
+                        }
+                    },
+                    {
+                        'Update': {
+                            'TableName': os.environ.get('bulk_manager_table'),
+                            'Key': {
+                                'PK': { 'S': utils.join_str('user#', job['user_id']) },
+                                'SK': { 'S': 'user' },
+                            },
+                            'UpdateExpression': 'SET active_job_count = active_job_count - :decr',
+                            'ExpressionAttributeValues': {
+                                ':decr': { 'N': '1' }
+                            }
+                        }
+                    }
+                ]
+            )
+            logging.info('add result transaction completed successfully. Details: %s', job)
+            return True
+        except ClientError as error:
+            raise DataAccessError(error)
+        except Exception as error:
+            raise DataAccessError(error)
+
+
     def publish_to_product_processor(self, message):
         import_topic = os.environ.get('import_topic_arn')
         try:
@@ -136,7 +234,7 @@ class DataAccess:
             raise Exception('Could not publish message successfully. Error:' + str(error))
 
 
-    def create_shopify_product(self, product_item, domain, access_token):
+    async def create_shopify_product(self, product_item, domain, access_token, session):
         url = 'https://' + domain + '/admin/api/' + self._api_version + '/graphql.json'
         headers = {'Content-Type': 'application/json', 'X-Shopify-Access-Token': access_token}
 
@@ -157,19 +255,18 @@ class DataAccess:
                     }
                 }"""
         variables = {'input': product_item}
-
         response = None
-        results = requests.post(url, json={'query': query, 'variables': variables}, headers=headers, timeout=30.0)
-        if results.status_code == HTTPStatus.OK:
-            response = results.json()
-            return response
-        elif results.status_code == HTTPStatus.UNAUTHORIZED:
+        response = await session.post(url, json={'query': query, 'variables': variables}, headers=headers)
+        if response.status == HTTPStatus.OK:
+            result = await response.json()
+            return result
+        elif response.status == HTTPStatus.UNAUTHORIZED:
             raise ShopifyUnauthorizedError("Shopify graphql request did not have the necessary credentials")
         else:
-            raise DataAccessError('Product create request failed. Status Code: ' + str(results.status_code))
+            raise DataAccessError('Product create request failed. Status Code: ' + str(response.status))
 
 
-    def search_collection_by_name(self, collection_name, domain, access_token):
+    async def search_collection_by_name(self, collection_name, domain, access_token, session):
         url = 'https://' + domain + '/admin/api/' + self._api_version + '/graphql.json'
         headers = {'Content-Type': 'application/json', 'X-Shopify-Access-Token': access_token}
 
@@ -185,19 +282,18 @@ class DataAccess:
                 }"""
         title = 'title:' + collection_name
         variables = {'title': title}
-
         response = None
-        results = requests.post(url, json={'query': query, 'variables': variables}, headers=headers, timeout=10.0)
-        if results.status_code == HTTPStatus.OK:
-            response = results.json()
-            return response
-        elif results.status_code == HTTPStatus.UNAUTHORIZED:
+        response = session.post(url, json={'query': query, 'variables': variables}, headers=headers)
+        if response.status == HTTPStatus.OK:
+            result = await response.json()
+            return result
+        elif response.status == HTTPStatus.UNAUTHORIZED:
             raise ShopifyUnauthorizedError("Shopify graphql request did not have the necessary credentials")
         else:
-            raise DataAccessError('Product create request failed. Status Code: ' + str(results.status_code))
+            raise DataAccessError('Product create request failed. Status Code: ' + str(response.status))
             
 
-    def get_collection_by_id(self, gid, domain, access_token):
+    async def get_collection_by_id(self, gid, domain, access_token, session):
         url = 'https://' + domain + '/admin/api/' + self._api_version + '/graphql.json'
         headers = {'Content-Type': 'application/json', 'X-Shopify-Access-Token': access_token}
 
@@ -210,11 +306,11 @@ class DataAccess:
         variables = {'id': gid}
 
         response = None
-        results = requests.post(url, json={'query': query, 'variables': variables}, headers=headers, timeout=10.0)
-        if results.status_code == HTTPStatus.OK:
-            response = results.json()
-            return response
-        elif results.status_code == HTTPStatus.UNAUTHORIZED:
+        response = session.post(url, json={'query': query, 'variables': variables}, headers=headers)
+        if response.status == HTTPStatus.OK:
+            result = await response.json()
+            return result
+        elif response.status == HTTPStatus.UNAUTHORIZED:
             raise ShopifyUnauthorizedError("Shopify graphql request did not have the necessary credentials")
         else:
-            raise DataAccessError('Product create request failed. Status Code: ' + str(results.status_code))
+            raise DataAccessError('Product create request failed. Status Code: ' + str(response.status))

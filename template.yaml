@@ -21,7 +21,8 @@ Resources:
       Runtime: python3.7
       Role: arn:aws:iam::191337286028:role/lambda-with-shopify
       Layers:
-        - arn:aws:lambda:us-east-2:191337286028:layer:custom_dependencies:6
+        - arn:aws:lambda:us-east-2:191337286028:layer:custom_dependencies:10
+        - arn:aws:lambda:us-east-2:191337286028:layer:aiohttp:1
       Environment:
         Variables:
           bulk_manager_table: BulkManager
@@ -29,7 +30,7 @@ Resources:
           prepared_products_bucket: shopify-prepared-products-dev
           import_topic_arn: arn:aws:sns:us-east-2:191337286028:ProductImportTopic
           shopify_api_version: 2021-04
-          batch_size: 100
+          batch_size: 200
 
 
 Outputs:
