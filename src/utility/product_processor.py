@@ -104,7 +104,7 @@ class ProductProcessor:
                 del product['warnings']
                 if len(product['variants']) > 100:
                     errors.append('The number of product variants for this product exceeds the shopify limit of 100 variants')
-                if 'collectionsToJoin' in product and len(product['collectionsToJoin'] > 4):
+                if 'collectionsToJoin' in product and len(product['collectionsToJoin']) > 4:
                     errors.append('Maximum Collections to add a product to cannot is limited to 4')
                 tasks.append(self.__put_shopify_product(product, counter, errors, warnings, session))
                 counter += 1
@@ -112,21 +112,25 @@ class ProductProcessor:
 
 
     async def __put_shopify_product(self, product_item, counter, errors, warnings, session):
-        if 'collectionsToJoin' in product_item:
-            await self.__modify_product(product_item, warnings)
-        response = None
-        try:
-            response = await self._data_access.create_shopify_product(product_item, self._domain, self._access_token, session)
-        except ShopifyUnauthorizedError as error:
-            logging.exception(str(error))
-            raise ShopifyUnauthorizedError(error)
-        except (DataAccessError, Exception) as error:
-            logging.exception('An Error occured whiles creating shopify product. Details are JobId: %s, Products: %s, Error: %s', self._job_id, product_item, str(error))
+        
+        if len(errors) > 0:
+            self.__put_result(product_item, ResultStatus.FAILED.name, errors, warnings, counter)
         else:
-            product_result = self.__check_product_result(product_item, response, errors)
-            self.__put_result(product_result['product'], product_result['result'], errors, warnings, counter)
-            if 'extensions' in response:
-                self._current_rate_limit = response['extensions']['cost']['throttleStatus']['currentlyAvailable']
+            if 'collectionsToJoin' in product_item:
+                await self.__modify_product(product_item, warnings, session)
+            response = None
+            try:
+                response = await self._data_access.create_shopify_product(product_item, self._domain, self._access_token, session)
+            except ShopifyUnauthorizedError as error:
+                logging.exception(str(error))
+                raise ShopifyUnauthorizedError(error)
+            except (DataAccessError, Exception) as error:
+                logging.exception('An Error occured whiles creating shopify product. Details are JobId: %s, Products: %s, Error: %s', self._job_id, product_item, str(error))
+            else:
+                product_result = self.__check_product_result(product_item, response, errors)
+                self.__put_result(product_result['product'], product_result['result'], errors, warnings, counter)
+                if 'extensions' in response:
+                    self._current_rate_limit = response['extensions']['cost']['throttleStatus']['currentlyAvailable']
 
 
     def __check_product_result(self, product, response, errors):
