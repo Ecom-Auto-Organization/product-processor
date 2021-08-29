@@ -29,7 +29,7 @@ Resources:
           s3_file_upload_bucket: shopify-file-save
           prepared_products_bucket: shopify-prepared-products-dev
           import_topic_arn: arn:aws:sns:us-east-2:191337286028:ProductImportTopic
-          shopify_api_version: 2021-04
+          shopify_api_version: 2021-07
           batch_size: 200
 
 
